@@ -7,19 +7,11 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 import numpy as np
 import pandas as pd
 
-# pd.set_option('display.max_rows', None)
-# pd.set_option('display.max_columns', None)
-# pd.set_option('display.width', None)
-# pd.set_option('display.max_colwidth', None)
-
 import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
-from pykrige.uk import UniversalKriging
 from metpy.calc import heat_index, relative_humidity_from_dewpoint, dewpoint_from_relative_humidity
 from metpy.units import units
 from cartopy.io.shapereader import Reader
@@ -34,12 +26,12 @@ from pyproj import Transformer
 from shapely.ops import transform as shapely_transform
 
 from danilib import f_settaggio_db_arpal
-# connessione = f_settaggio_db_arpal()
+connessione = f_settaggio_db_arpal()
 
 plt.rc('font', weight='normal', size=6)
 
-# os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
-os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
+os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
+# os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
 
 from funzioni import _hex_to_rgb
 from funzioni import f_interp
@@ -62,11 +54,10 @@ crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, centra
 ######################
 ######################
 
-adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).floor('h')
+adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round(freq)
 
-# lista_tempi = [adesso_0_UTC]
-# lista_tempi = pd.date_range('2026-06-25 00:00', '2026-06-25 18:00', freq=freq)
-lista_tempi = pd.date_range('2026-07-07 00:00', adesso_0_UTC, freq=freq)
+lista_tempi = [adesso_0_UTC - pd.Timedelta(freq)]
+lista_tempi = pd.date_range('2026-06-27 00:00', adesso_0_UTC, freq=freq)
 
 albero_3857 = None
 
@@ -138,13 +129,14 @@ for tempo in lista_tempi:
         drop=True
     )
     
+    """ Prima riportavo tutto a theta
     # print('Interpolo TMEAN_grigliata_h...')
     # TMEAN_grigliata_h = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo THETAMEAN_grigliata_sfc...')
     THETAMEAN_grigliata_sfc = f_interp(df_obs_TMEAN['theta_TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo TMEAN_grigliata_h_nuova...')
     TMEAN_grigliata_h_nuova = THETAMEAN_grigliata_sfc - float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')) * ds_orog_lsm.mterh.values[::-1, :]
-    
+
     df_obs_RH['Td'] = dewpoint_from_relative_humidity(
         df_obs_RH['TMEAN'].values * units.degC,
         df_obs_RH['RH'].values * units.percent
@@ -153,16 +145,34 @@ for tempo in lista_tempi:
     df_obs_RH['theta_Td'] = df_obs_RH['Td'] + df_obs_RH['ELEV'] * float(config.get('HEATINDEX2D_OBS', 'lapse_rate_d'))
     
     print('Interpolo THETATD_grigliata_sfc...')
-    THETATD_grigliata_sfc = f_interp(df_obs_RH['theta_Td'], df_obs_RH['LAT'], df_obs_RH['LON'], ds_orog_lsm)
+    try:
+        THETATD_grigliata_sfc = f_interp(df_obs_RH['theta_Td'], df_obs_RH['LAT'], df_obs_RH['LON'], ds_orog_lsm)
+    except ValueError:
+        print('\n*** Errore con la THETATD_grigliata_sfc. Esco.\n')
+        continue
+    
     Td_grigliata_h_nuova = THETATD_grigliata_sfc - float(config.get('HEATINDEX2D_OBS', 'lapse_rate_d')) * ds_orog_lsm.mterh.values[::-1, :]
     
     RH_grid = relative_humidity_from_dewpoint(
         TMEAN_grigliata_h_nuova * units.degC,
         Td_grigliata_h_nuova * units.degC
     ).magnitude * 100
-
+    """
+    
+    """ Adesso vado dritto con il Kriging con l'orografia """
+    TMEAN_grigliata_h_nuova = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    RH_grid = f_interp(df_obs_RH['RH'], df_obs_RH['LAT'], df_obs_RH['LON'], ds_orog_lsm)
+    
     print('Calcolo HI...')
-    hi = heat_index(TMEAN_grigliata_h_nuova * units.degC, RH_grid * units.percent, mask_undefined=True)
+    hi = heat_index(TMEAN_grigliata_h_nuova * units.degC, RH_grid * units.percent, mask_undefined=False)
+    
+    ### Vedi: https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
+    hi_F = hi.to('degF')
+    t_F = TMEAN_grigliata_h_nuova * 9/5 + 32
+    hi_Rothfusz_F = 0.5 * (t_F + 61.0 + ((t_F - 68.0) * 1.2) + (RH_grid * 0.094))
+    hi_F = np.where(hi_F.magnitude < 80, hi_Rothfusz_F, hi_F.magnitude) * units.degF
+    hi = hi_F.to('degC')
+    
     hi = np.ma.filled(hi.magnitude, 0)
     hi = np.where(ds_orog_lsm.lsm.values[::-1, :] < 1, 0, hi)
     hi = np.where(hi < 30, 0, hi)
@@ -215,6 +225,7 @@ for tempo in lista_tempi:
     
     ### Scommenta per vedere il plot
     
+    # from funzioni import f_plot_coste
     # fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': ccrs.PlateCarree()})
     # f_plot_coste(ax, area, regioni)
     # pcm = ax.contourf(

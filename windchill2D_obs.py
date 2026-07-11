@@ -7,19 +7,11 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 import numpy as np
 import pandas as pd
 
-# pd.set_option('display.max_rows', None)
-# pd.set_option('display.max_columns', None)
-# pd.set_option('display.width', None)
-# pd.set_option('display.max_colwidth', None)
-
 import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
-from pykrige.uk import UniversalKriging
 from metpy.calc import windchill
 from metpy.units import units
 from cartopy.io.shapereader import Reader
@@ -34,16 +26,15 @@ from pyproj import Transformer
 from shapely.ops import transform as shapely_transform
 
 from danilib import f_settaggio_db_arpal
-# connessione = f_settaggio_db_arpal()
+connessione = f_settaggio_db_arpal()
 
 plt.rc('font', weight='normal', size=6)
 
-# os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
-os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
+os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
+# os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
 
 from funzioni import _hex_to_rgb
 from funzioni import f_interp
-from funzioni import f_plot_coste
 
 regioni = Reader('./shapefile/gadm41_ITA_shp/gadm41_ITA_1.shp')
 
@@ -63,21 +54,19 @@ crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, centra
 ######################
 ######################
 
-adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).floor('h')
+adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round(freq)
 
-# lista_tempi = [adesso_0_UTC]
-# lista_tempi = pd.date_range('2026-01-05 00:00', '2026-01-10 00:00', freq=freq)
-lista_tempi = pd.date_range('2018-02-28 00:00', '2018-03-01 00:00', freq=freq)
-# lista_tempi = pd.date_range('2018-02-28 00:00', adesso_0_UTC, freq=freq)
+# lista_tempi = [adesso_0_UTC - pd.Timedelta(freq)]
+lista_tempi = pd.date_range('2026-06-28 00:00', adesso_0_UTC, freq=freq)
 
 albero_3857 = None
 
 for tempo in lista_tempi:
     print(tempo)
-    
+
     cartella_file = f"{cartella_destinazione}/{tempo.strftime('%Y/%m/%d')}"
     nome_base = f"windchill2D_obs_{tempo.strftime('%Y-%m-%d_%H%M')}"
-    if os.path.exists(f'{cartella_file}/{nome_base}') and not config.getboolean('COMMON', 'sovrascrivi'):
+    if os.path.exists(f'{cartella_file}/{nome_base}.png') and not config.getboolean('COMMON', 'sovrascrivi'):
         print('Esiste già il file. Esco.\n')
         continue
 
@@ -140,6 +129,7 @@ for tempo in lista_tempi:
         drop=True
     )
     
+    """ Prima riportavo tutto a theta
     # print('Interpolo TMEAN_grigliata_h...')
     # TMEAN_grigliata_h = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo THETAMEAN_grigliata_sfc...')
@@ -149,7 +139,12 @@ for tempo in lista_tempi:
     
     print('Interpolo WIND_grigliata_h...')
     WIND_grigliata_h = f_interp(df_obs_WIND['WIND'], df_obs_WIND['LAT'], df_obs_WIND['LON'], ds_orog_lsm)
-
+    """
+    
+    """ Adesso vado dritto con il Kriging con l'orografia """
+    TMEAN_grigliata_h_nuova = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    WIND_grigliata_h = f_interp(df_obs_WIND['WIND'], df_obs_WIND['LAT'], df_obs_WIND['LON'], ds_orog_lsm)
+    
     print('Calcolo WC...')
     wc = windchill(TMEAN_grigliata_h_nuova * units.degC, WIND_grigliata_h * units('m/s'), face_level_winds=False, mask_undefined=True)
     wc = np.ma.filled(wc.magnitude, np.nan)
@@ -204,6 +199,7 @@ for tempo in lista_tempi:
     
     ### Scommenta per vedere il plot
     
+    # from funzioni import f_plot_coste
     # fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': ccrs.PlateCarree()})
     # f_plot_coste(ax, aree, regioni)
     # pcm = ax.contourf(
