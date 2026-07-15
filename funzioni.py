@@ -41,6 +41,7 @@ def f_interp(punti, lat, lon, ds_orog_lsm):
         variogram_model='linear',
         drift_terms=['specified'],
         specified_drift=[elev_at_points],
+        exact_values=True
     )
     
     valid_tgt = ~np.isnan(griglia_orog.ravel())

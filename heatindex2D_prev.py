@@ -44,8 +44,8 @@ config.read('./config.ini')
 
 area = ast.literal_eval(config.get('COMMON', 'area'))
 R_TERRA = 6378137.0  # raggio sferico Web Mercator (EPSG:3857)
-cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_obs"
-freq = config.get('COMMON', 'freq')
+cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_prev"
+freq = config.get('COMMON', 'freq_prev')
 
 ds_orog_lsm = xr.open_dataset('./moloch_domain_orogr_lsm.grib2', engine='cfgrib')
 crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, central_rotated_longitude=8.634001)
@@ -54,71 +54,61 @@ crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, centra
 ######################
 ######################
 
-adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round(freq)
+# oggi = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round('1d') + pd.Timedelta(hours=1)
+oggi = pd.Timestamp('2026-07-14 01:00:00')
 
-# lista_tempi = [adesso_0_UTC - pd.Timedelta(freq)]
-lista_tempi = pd.date_range('2026-06-28 00:00', adesso_0_UTC, freq=freq)
+lista_tempi = pd.date_range(start=oggi, periods=72, freq='1h')
 
 albero_3857 = None
+
+tempo_previsione = lista_tempi[0].round('1d')
+cartella_temperatura = f"{config.get('COMMON', 'cartella_dati1D')}/temperatura/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+cartella_umidita = f"{config.get('COMMON', 'cartella_dati1D')}/umidita/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+
+df_coordinate_temperatura = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/temperatura/df_coordinate.csv", index_col=0)
+df_coordinate_umidita = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/umidita/df_coordinate.csv", index_col=0)
+
+df_previsioni_temperatura = pd.DataFrame()
+df_previsioni_umidita = pd.DataFrame()
+
+for stazione in os.listdir(cartella_temperatura):
+    df = pd.read_csv(f'{cartella_temperatura}/{stazione}')
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF media': 'TMEAN'})
+    df['CODE'] = stazione.split('.')[0]
+    df['LON'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Longitude']
+    df['LAT'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Latitude']
+    df['ELEV'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Altitude']
+    df['NAME'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Name']
+    
+    df = df[['TEMPO', 'CODE', 'LON', 'LAT', 'NAME', 'TMEAN']]
+    
+    df_previsioni_temperatura = pd.concat([df_previsioni_temperatura, df], axis=0)
+
+for stazione in os.listdir(cartella_umidita):
+    df = pd.read_csv(f'{cartella_umidita}/{stazione}')
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF media': 'RH'})
+    df['CODE'] = stazione.split('.')[0]
+    df['LON'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Longitude']
+    df['LAT'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Latitude']
+    df['ELEV'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Altitude']
+    df['NAME'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Name']
+    
+    df = df[['TEMPO', 'CODE', 'LON', 'LAT', 'NAME', 'RH']]
+    
+    df_previsioni_umidita = pd.concat([df_previsioni_umidita, df], axis=0)
 
 for tempo in lista_tempi:
     print(tempo)
 
-    cartella_file = f"{cartella_destinazione}/{tempo.strftime('%Y/%m/%d')}"
-    nome_base = f"heatindex2D_obs_{tempo.strftime('%Y-%m-%d_%H%M')}"
+    cartella_file = f"{cartella_destinazione}/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+    nome_base = f"heatindex2D_prev_{tempo.strftime('%Y-%m-%d_%H%M')}"
     if os.path.exists(f'{cartella_file}/{nome_base}.png') and not config.getboolean('COMMON', 'sovrascrivi'):
         print('Esiste già il file. Esco.\n')
         continue
-    
-    query_TMEAN = f"""
-    SELECT
-        TO_CHAR(data.dtrf, 'YYYY-MM-DD HH24:MI:SS') AS tempo,
-        anag.code,
-        anag.lon/1e5 AS lon,
-        anag.lat/1e5 AS lat,
-        anag.elev AS elev,
-        anag.name AS name,
-        tempm/10 AS TMEAN
-    FROM
-        data
-    JOIN
-        anag ON data.code = anag.code
-    WHERE
-        tempm IS NOT NULL
-        AND data.dtrf = TO_DATE('{tempo:%Y%m%d%H%M}', 'YYYYMMDDHH24MI')
-        AND anag.region='LIGURIA'
-    ORDER BY
-        data.code
-    """
-    
-    query_RH = f"""
-    SELECT
-        TO_CHAR(data.dtrf, 'YYYY-MM-DD HH24:MI:SS') AS tempo,
-        anag.code,
-        anag.lon/1e5 AS lon,
-        anag.lat/1e5 AS lat,
-        anag.elev AS elev,
-        anag.name AS name,
-        tempm/10 as TMEAN,
-        rehum as RH
-    FROM
-        data
-    JOIN
-        anag ON data.code = anag.code
-    WHERE
-        rehum IS NOT NULL
-        AND tempm IS NOT NULL
-        AND data.dtrf = TO_DATE('{tempo:%Y%m%d%H%M}', 'YYYYMMDDHH24MI')
-        AND anag.region='LIGURIA'
-    ORDER BY
-        data.code
-    """
 
-    print('Query della temperatura...')
-    df_obs_TMEAN = pd.read_sql(query_TMEAN, con=connessione).dropna()
-    print('Query dell\'umidità...')
-    df_obs_RH = pd.read_sql(query_RH, con=connessione).dropna()
-    
+    df_prev_TMEAN = df_previsioni_temperatura[df_previsioni_temperatura['TEMPO'] == str(tempo)]
+    df_prev_RH = df_previsioni_umidita[df_previsioni_umidita['TEMPO'] == str(tempo)]
+
     ######################
     ######################
     ######################
@@ -130,24 +120,24 @@ for tempo in lista_tempi:
     )
     
     """ Prima riportavo tutto a theta
-    df_obs_TMEAN["theta_TMEAN"] = df_obs_TMEAN["TMEAN"].add(df_obs_TMEAN["ELEV"] * float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')), axis=0)
+    df_prev_TMEAN["theta_TMEAN"] = df_prev_TMEAN["TMEAN"].add(df_prev_TMEAN["ELEV"] * float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')), axis=0)
     # print('Interpolo TMEAN_grigliata_h...')
-    # TMEAN_grigliata_h = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    # TMEAN_grigliata_h = f_interp(df_prev_TMEAN['TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo THETAMEAN_grigliata_sfc...')
-    THETAMEAN_grigliata_sfc = f_interp(df_obs_TMEAN['theta_TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    THETAMEAN_grigliata_sfc = f_interp(df_prev_TMEAN['theta_TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo TMEAN_grigliata_h_nuova...')
     TMEAN_grigliata_h_nuova = THETAMEAN_grigliata_sfc - float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')) * ds_orog_lsm.mterh.values[::-1, :]
 
-    df_obs_RH['Td'] = dewpoint_from_relative_humidity(
-        df_obs_RH['TMEAN'].values * units.degC,
-        df_obs_RH['RH'].values * units.percent
+    df_prev_RH['Td'] = dewpoint_from_relative_humidity(
+        df_prev_RH['TMEAN'].values * units.degC,
+        df_prev_RH['RH'].values * units.percent
     ).magnitude
 
-    df_obs_RH['theta_Td'] = df_obs_RH['Td'] + df_obs_RH['ELEV'] * float(config.get('HEATINDEX2D_OBS', 'lapse_rate_d'))
+    df_prev_RH['theta_Td'] = df_prev_RH['Td'] + df_prev_RH['ELEV'] * float(config.get('HEATINDEX2D_OBS', 'lapse_rate_d'))
     
     print('Interpolo THETATD_grigliata_sfc...')
     try:
-        THETATD_grigliata_sfc = f_interp(df_obs_RH['theta_Td'], df_obs_RH['LAT'], df_obs_RH['LON'], ds_orog_lsm)
+        THETATD_grigliata_sfc = f_interp(df_prev_RH['theta_Td'], df_prev_RH['LAT'], df_prev_RH['LON'], ds_orog_lsm)
     except ValueError:
         print('\n*** Errore con la THETATD_grigliata_sfc. Esco.\n')
         continue
@@ -161,8 +151,8 @@ for tempo in lista_tempi:
     """
     
     """ Adesso vado dritto con il Kriging con l'orografia """
-    TMEAN_grigliata_h_nuova = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
-    RH_grid = f_interp(df_obs_RH['RH'], df_obs_RH['LAT'], df_obs_RH['LON'], ds_orog_lsm)
+    TMEAN_grigliata_h_nuova = f_interp(df_prev_TMEAN['TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
+    RH_grid = f_interp(df_prev_RH['RH'], df_prev_RH['LAT'], df_prev_RH['LON'], ds_orog_lsm)
     
     print('Calcolo HI...')
     hi = heat_index(TMEAN_grigliata_h_nuova * units.degC, RH_grid * units.percent, mask_undefined=False)
@@ -343,7 +333,7 @@ for tempo in lista_tempi:
     #         ds_orog_lsm.longitude.values[::-1, :],
     #         ds_orog_lsm.latitude.values[::-1, :],
     #         TMEAN_grigliata_h,
-    #         levels=np.arange(np.ceil(df_obs['TMEAN'].min()), np.floor(df_obs['TMEAN'].max()), 1),
+    #         levels=np.arange(np.ceil(df_prev['TMEAN'].min()), np.floor(df_prev['TMEAN'].max()), 1),
     #         cmap='rainbow',
     #         extend='both',
     #         transform=ccrs.PlateCarree()
@@ -363,7 +353,7 @@ for tempo in lista_tempi:
     #         ds_orog_lsm.longitude.values[::-1, :],
     #         ds_orog_lsm.latitude.values[::-1, :],
     #         THETAMEAN_grigliata_sfc,
-    #         levels=np.arange(np.ceil(df_obs['TMEAN'].min()), np.floor(df_obs['TMEAN'].max()), 1),
+    #         levels=np.arange(np.ceil(df_prev['TMEAN'].min()), np.floor(df_prev['TMEAN'].max()), 1),
     #         cmap='rainbow',
     #         extend='both',
     #         transform=ccrs.PlateCarree()
@@ -383,7 +373,7 @@ for tempo in lista_tempi:
     #         ds_orog_lsm.longitude.values[::-1, :],
     #         ds_orog_lsm.latitude.values[::-1, :],
     #         TMEAN_grigliata_h_nuova,
-    #         levels=np.arange(np.ceil(df_obs['TMEAN'].min()), np.floor(df_obs['TMEAN'].max()), 1),
+    #         levels=np.arange(np.ceil(df_prev['TMEAN'].min()), np.floor(df_prev['TMEAN'].max()), 1),
     #         cmap='rainbow',
     #         extend='both',
     #         transform=ccrs.PlateCarree()
@@ -514,7 +504,7 @@ for tempo in lista_tempi:
 # ax.patch.set_alpha(0)
 
 # plt.savefig(
-#     "./../MeteoBricchi/static/icone/colorbar_heatindex2D_obs.png",
+#     "./../MeteoBricchi/static/icone/colorbar_heatindex2D_prev.png",
 #     dpi=600,
 #     transparent=True,
 #     bbox_inches="tight",

@@ -30,8 +30,8 @@ connessione = f_settaggio_db_arpal()
 
 plt.rc('font', weight='normal', size=6)
 
-os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
-# os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
+# os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
+os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
 
 from funzioni import _hex_to_rgb
 from funzioni import f_interp
@@ -44,8 +44,8 @@ config.read('./config.ini')
 
 area = ast.literal_eval(config.get('COMMON', 'area'))
 R_TERRA = 6378137.0  # raggio sferico Web Mercator (EPSG:3857)
-cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/windchill2D_obs"
-freq = config.get('COMMON', 'freq')
+cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/windchill2D_prev"
+freq = config.get('COMMON', 'freq_prev')
 
 ds_orog_lsm = xr.open_dataset('./moloch_domain_orogr_lsm.grib2', engine='cfgrib')
 crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, central_rotated_longitude=8.634001)
@@ -54,68 +54,60 @@ crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, centra
 ######################
 ######################
 
-adesso_0_UTC = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round(freq)
+# oggi = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round('1d') + pd.Timedelta(hours=1)
+oggi = pd.Timestamp('2026-07-14 01:00:00')
 
-# lista_tempi = [adesso_0_UTC - pd.Timedelta(freq)]
-lista_tempi = pd.date_range('2026-06-28 00:00', adesso_0_UTC, freq=freq)
+lista_tempi = pd.date_range(start=oggi, periods=72, freq='1h')
 
 albero_3857 = None
+
+tempo_previsione = lista_tempi[0].round('1d')
+cartella_temperatura = f"{config.get('COMMON', 'cartella_dati1D')}/temperatura/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+cartella_vento = f"{config.get('COMMON', 'cartella_dati1D')}/vento/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+
+df_coordinate_temperatura = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/temperatura/df_coordinate.csv", index_col=0)
+df_coordinate_vento = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/vento/df_coordinate.csv", index_col=0)
+
+df_previsioni_temperatura = pd.DataFrame()
+df_previsioni_vento = pd.DataFrame()
+
+for stazione in os.listdir(cartella_temperatura):
+    df = pd.read_csv(f'{cartella_temperatura}/{stazione}')
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF media': 'TMEAN'})
+    df['CODE'] = stazione.split('.')[0]
+    df['LON'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Longitude']
+    df['LAT'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Latitude']
+    df['ELEV'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Altitude']
+    df['NAME'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Name']
+    
+    df = df[['TEMPO', 'CODE', 'LON', 'LAT', 'NAME', 'TMEAN']]
+    
+    df_previsioni_temperatura = pd.concat([df_previsioni_temperatura, df], axis=0)
+
+for stazione in os.listdir(cartella_vento):
+    df = pd.read_csv(f'{cartella_vento}/{stazione}')
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF vento': 'WIND'})
+    df['CODE'] = stazione.split('.')[0]
+    df['LON'] = df_coordinate_vento.loc[stazione.split('.')[0]]['Longitude']
+    df['LAT'] = df_coordinate_vento.loc[stazione.split('.')[0]]['Latitude']
+    df['ELEV'] = df_coordinate_vento.loc[stazione.split('.')[0]]['Altitude']
+    df['NAME'] = df_coordinate_vento.loc[stazione.split('.')[0]]['Name']
+    
+    df = df[['TEMPO', 'CODE', 'LON', 'LAT', 'NAME', 'WIND']]
+    
+    df_previsioni_vento = pd.concat([df_previsioni_vento, df], axis=0)
 
 for tempo in lista_tempi:
     print(tempo)
 
-    cartella_file = f"{cartella_destinazione}/{tempo.strftime('%Y/%m/%d')}"
-    nome_base = f"windchill2D_obs_{tempo.strftime('%Y-%m-%d_%H%M')}"
+    cartella_file = f"{cartella_destinazione}/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+    nome_base = f"windchill2D_prev_{tempo.strftime('%Y-%m-%d_%H%M')}"
     if os.path.exists(f'{cartella_file}/{nome_base}.png') and not config.getboolean('COMMON', 'sovrascrivi'):
         print('Esiste già il file. Esco.\n')
         continue
 
-    query_TMEAN = f"""
-    SELECT
-        TO_CHAR(data.dtrf, 'YYYY-MM-DD HH24:MI:SS') AS tempo,
-        anag.code,
-        anag.lon/1e5 AS lon,
-        anag.lat/1e5 AS lat,
-        anag.elev AS elev,
-        anag.name AS name,
-        tempm/10 AS TMEAN
-    FROM
-        data
-    JOIN
-        anag ON data.code = anag.code
-    WHERE
-        tempm IS NOT NULL
-        AND data.dtrf = TO_DATE('{tempo:%Y%m%d%H%M}', 'YYYYMMDDHH24MI')
-    ORDER BY
-        data.code
-    """
-    
-    query_WIND = f"""
-    SELECT
-        TO_CHAR(data.dtrf, 'YYYY-MM-DD HH24:MI:SS') AS tempo,
-        anag.code,
-        anag.lon/1e5 AS lon,
-        anag.lat/1e5 AS lat,
-        anag.elev AS elev,
-        anag.name AS name,
-        tempm/10 as TMEAN,
-        wspdm/10 as WIND
-    FROM
-        data
-    JOIN
-        anag ON data.code = anag.code
-    WHERE
-        wspdm IS NOT NULL
-        AND tempm IS NOT NULL
-        AND data.dtrf = TO_DATE('{tempo:%Y%m%d%H%M}', 'YYYYMMDDHH24MI')
-    ORDER BY
-        data.code
-    """
-
-    print('Query della temperatura...')
-    df_obs_TMEAN = pd.read_sql(query_TMEAN, con=connessione).dropna()
-    print('Query del vento...')
-    df_obs_WIND = pd.read_sql(query_WIND, con=connessione).dropna()
+    df_prev_TMEAN = df_previsioni_temperatura[df_previsioni_temperatura['TEMPO'] == str(tempo)]
+    df_prev_WIND = df_previsioni_vento[df_previsioni_vento['TEMPO'] == str(tempo)]
 
     ######################
     ######################
@@ -128,21 +120,21 @@ for tempo in lista_tempi:
     )
     
     """ Prima riportavo tutto a theta
-    df_obs_TMEAN["theta_TMEAN"] = df_obs_TMEAN["TMEAN"].add(df_obs_TMEAN["ELEV"] * float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')), axis=0)
+    df_prev_TMEAN["theta_TMEAN"] = df_prev_TMEAN["TMEAN"].add(df_prev_TMEAN["ELEV"] * float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')), axis=0)
     # print('Interpolo TMEAN_grigliata_h...')
-    # TMEAN_grigliata_h = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    # TMEAN_grigliata_h = f_interp(df_prev_TMEAN['TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo THETAMEAN_grigliata_sfc...')
-    THETAMEAN_grigliata_sfc = f_interp(df_obs_TMEAN['theta_TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
+    THETAMEAN_grigliata_sfc = f_interp(df_prev_TMEAN['theta_TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
     print('Interpolo TMEAN_grigliata_h_nuova...')
     TMEAN_grigliata_h_nuova = THETAMEAN_grigliata_sfc - float(config.get('WINDCHILL2D_OBS', 'lapse_rate_T')) * ds_orog_lsm.mterh.values[::-1, :]
     
     print('Interpolo WIND_grigliata_h...')
-    WIND_grigliata_h = f_interp(df_obs_WIND['WIND'], df_obs_WIND['LAT'], df_obs_WIND['LON'], ds_orog_lsm)
+    WIND_grigliata_h = f_interp(df_prev_WIND['WIND'], df_prev_WIND['LAT'], df_prev_WIND['LON'], ds_orog_lsm)
     """
     
     """ Adesso vado dritto con il Kriging con l'orografia """
-    TMEAN_grigliata_h_nuova = f_interp(df_obs_TMEAN['TMEAN'], df_obs_TMEAN['LAT'], df_obs_TMEAN['LON'], ds_orog_lsm)
-    WIND_grigliata_h = f_interp(df_obs_WIND['WIND'], df_obs_WIND['LAT'], df_obs_WIND['LON'], ds_orog_lsm)
+    TMEAN_grigliata_h_nuova = f_interp(df_prev_TMEAN['TMEAN'], df_prev_TMEAN['LAT'], df_prev_TMEAN['LON'], ds_orog_lsm)
+    WIND_grigliata_h = f_interp(df_prev_WIND['WIND'], df_prev_WIND['LAT'], df_prev_WIND['LON'], ds_orog_lsm)
     
     print('Calcolo WC...')
     wc = windchill(TMEAN_grigliata_h_nuova * units.degC, WIND_grigliata_h * units('m/s'), face_level_winds=False, mask_undefined=True)
@@ -217,6 +209,7 @@ for tempo in lista_tempi:
     # cbar.ax.tick_params(which='minor', length=0)
     # plt.show()
     # plt.close()
+    # continue
     # sss
 
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
@@ -380,7 +373,7 @@ for tempo in lista_tempi:
 # ax.patch.set_alpha(0)
 
 # plt.savefig(
-#     "./../MeteoBricchi/static/icone/colorbar_windchill2D_obs.png",
+#     "./../MeteoBricchi/static/icone/colorbar_windchill2D_prev.png",
 #     dpi=600,
 #     transparent=True,
 #     bbox_inches="tight",
