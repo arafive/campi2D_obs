@@ -1,5 +1,6 @@
 
 import os
+import sys
 import ast
 import warnings
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -30,8 +31,11 @@ connessione = f_settaggio_db_arpal()
 
 plt.rc('font', weight='normal', size=6)
 
-# os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
-os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
+sys.path.insert(0, os.path.expanduser('~/.config'))
+from config_percorsi_Daniele import CARTELLA_REPO_ROOT
+
+cartella_lavoro = os.path.join(CARTELLA_REPO_ROOT, 'campi2D_obs')
+os.chdir(cartella_lavoro)
 
 from funzioni import _hex_to_rgb
 from funzioni import f_interp
@@ -44,7 +48,7 @@ config.read('./config.ini')
 
 area = ast.literal_eval(config.get('COMMON', 'area'))
 R_TERRA = 6378137.0  # raggio sferico Web Mercator (EPSG:3857)
-cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_obs"
+cartella_destinazione = os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_obs")
 freq = config.get('COMMON', 'freq')
 
 ds_orog_lsm = xr.open_dataset('./moloch_domain_orogr_lsm.grib2', engine='cfgrib')

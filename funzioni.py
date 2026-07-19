@@ -18,7 +18,7 @@ def f_interp(punti, lat, lon, ds_orog_lsm):
     lon2D = ds_orog_lsm.longitude.values[::-1, :]
 
     valid_src = ~np.isnan(griglia_orog.ravel())
-    
+
     elev_at_points = griddata(
         (lon2D.ravel()[valid_src], lat2D.ravel()[valid_src]),
         griglia_orog.ravel()[valid_src],
@@ -33,7 +33,7 @@ def f_interp(punti, lat, lon, ds_orog_lsm):
             (lon.values[nan_mask], lat.values[nan_mask]),
             method='nearest'
         )
-        
+
     uk = UniversalKriging(
         lon.values,
         lat.values,
@@ -43,7 +43,7 @@ def f_interp(punti, lat, lon, ds_orog_lsm):
         specified_drift=[elev_at_points],
         exact_values=True
     )
-    
+
     valid_tgt = ~np.isnan(griglia_orog.ravel())
     z_flat = np.full(lon2D.size, np.nan)
     ss_flat = np.full(lon2D.size, np.nan)
@@ -53,7 +53,7 @@ def f_interp(punti, lat, lon, ds_orog_lsm):
         lat2D.ravel()[valid_tgt],
         specified_drift_arrays=[griglia_orog.ravel()[valid_tgt]]
     )
-    
+
     return z_flat.reshape(lat2D.shape)
 
 
@@ -62,6 +62,7 @@ def f_plot_coste(ax, area, regioni):
     ax.add_feature(cfeature.BORDERS, lw=0.75)
     ax.set_extent(area, crs=ccrs.PlateCarree())
     for r in regioni.records():
-       if r.attributes['NAME_1'] == 'Liguria':
-           liguria = r.geometry
-           ax.add_geometries([liguria], crs=ccrs.PlateCarree(), facecolor='none', edgecolor='black', linewidth=0.5)
+        if r.attributes['NAME_1'] == 'Liguria':
+            liguria = r.geometry
+            ax.add_geometries([liguria], crs=ccrs.PlateCarree(
+            ), facecolor='none', edgecolor='black', linewidth=0.5)

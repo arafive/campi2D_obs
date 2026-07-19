@@ -1,5 +1,6 @@
 
 import os
+import sys
 import ast
 import warnings
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -30,8 +31,11 @@ connessione = f_settaggio_db_arpal()
 
 plt.rc('font', weight='normal', size=6)
 
-# os.chdir('/run/media/daniele.carnevale/Daniele2TB/repo/campi2D_obs')
-os.chdir('/media/daniele/Daniele2TB/repo/campi2D_obs')
+sys.path.insert(0, os.path.expanduser('~/.config'))
+from config_percorsi_Daniele import CARTELLA_REPO_ROOT
+
+cartella_lavoro = os.path.join(CARTELLA_REPO_ROOT, 'campi2D_obs')
+os.chdir(cartella_lavoro)
 
 from funzioni import _hex_to_rgb
 from funzioni import f_interp
@@ -44,7 +48,7 @@ config.read('./config.ini')
 
 area = ast.literal_eval(config.get('COMMON', 'area'))
 R_TERRA = 6378137.0  # raggio sferico Web Mercator (EPSG:3857)
-cartella_destinazione = f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_prev"
+cartella_destinazione = os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_destinazione')}/heatindex2D_prev")
 freq = config.get('COMMON', 'freq_prev')
 
 ds_orog_lsm = xr.open_dataset('./moloch_domain_orogr_lsm.grib2', engine='cfgrib')
@@ -54,26 +58,33 @@ crs_moloch = ccrs.RotatedPole(pole_longitude=9, pole_latitude=135.000004, centra
 ######################
 ######################
 
-# oggi = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round('1d') + pd.Timedelta(hours=1)
-oggi = pd.Timestamp('2026-07-14 01:00:00')
+if len(sys.argv) > 1:
+    data_arg = ' '.join(sys.argv[1:])
+    oggi = pd.Timestamp(data_arg)
+else:
+    oggi = pd.to_datetime(datetime.now(timezone.utc)).tz_localize(None).round('1d')
+
+oggi = oggi + pd.Timedelta(hours=1)
+# oggi = pd.Timestamp('2026-07-14 01:00:00')
+print(oggi)
 
 lista_tempi = pd.date_range(start=oggi, periods=72, freq='1h')
 
 albero_3857 = None
 
 tempo_previsione = lista_tempi[0].round('1d')
-cartella_temperatura = f"{config.get('COMMON', 'cartella_dati1D')}/temperatura/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
-cartella_umidita = f"{config.get('COMMON', 'cartella_dati1D')}/umidita/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}"
+cartella_temperatura = os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_dati1D')}/temperatura/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}")
+cartella_umidita = os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_dati1D')}/umidita/{config.get('COMMON', 'modello')}/{tempo_previsione.strftime('%Y/%m/%d')}")
 
-df_coordinate_temperatura = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/temperatura/df_coordinate.csv", index_col=0)
-df_coordinate_umidita = pd.read_csv(f"{config.get('COMMON', 'cartella_coordinate')}/umidita/df_coordinate.csv", index_col=0)
+df_coordinate_temperatura = pd.read_csv(os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_coordinate')}/temperatura/df_coordinate.csv"), index_col=0)
+df_coordinate_umidita = pd.read_csv(os.path.join(CARTELLA_REPO_ROOT, f"{config.get('COMMON', 'cartella_coordinate')}/umidita/df_coordinate.csv"), index_col=0)
 
 df_previsioni_temperatura = pd.DataFrame()
 df_previsioni_umidita = pd.DataFrame()
 
 for stazione in os.listdir(cartella_temperatura):
     df = pd.read_csv(f'{cartella_temperatura}/{stazione}')
-    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF media': 'TMEAN'})
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO', 'QRF media': 'TMEAN'})
     df['CODE'] = stazione.split('.')[0]
     df['LON'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Longitude']
     df['LAT'] = df_coordinate_temperatura.loc[stazione.split('.')[0]]['Latitude']
@@ -86,7 +97,7 @@ for stazione in os.listdir(cartella_temperatura):
 
 for stazione in os.listdir(cartella_umidita):
     df = pd.read_csv(f'{cartella_umidita}/{stazione}')
-    df = df.rename(columns={'Unnamed: 0': 'TEMPO','QRF media': 'RH'})
+    df = df.rename(columns={'Unnamed: 0': 'TEMPO', 'QRF media': 'RH'})
     df['CODE'] = stazione.split('.')[0]
     df['LON'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Longitude']
     df['LAT'] = df_coordinate_umidita.loc[stazione.split('.')[0]]['Latitude']
@@ -208,7 +219,7 @@ for tempo in lista_tempi:
         '#990000',
         ####
         '#A500FF'
-        ]
+    ]
     
     cmap = mcolors.ListedColormap(colori[:-1])
     cmap.set_over(colori[-1])
